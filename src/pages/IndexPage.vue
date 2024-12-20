@@ -2,9 +2,14 @@
   <q-page class="row q-pt-xl">
     <div class="full-width q-px-xl">
       <div class="q-mb-xl">
-        <q-input v-model="tempData.name" label="姓名" />
-        <q-input v-model="tempData.age" label="年齡" />
-        <q-btn color="primary" class="q-mt-md">新增</q-btn>
+        <q-input ref="nameInputEl" v-model="tempData.name" label="姓名" :rules="nameInputRules" lazy-rules />
+        <q-input ref="ageInputEl" v-model="tempData.age" label="年齡" :rules="ageInputRules" lazy-rules />
+        <q-btn v-if="mode === 'create'" color="primary" class="q-mt-md" :disable="isCreateLoading" @click="createUser">新增</q-btn>
+        <div v-else>
+          <q-btn color="primary" class="q-mt-md q-mr-md" :disable="isUpdateLoading" @click="updateUser">編輯</q-btn>
+          <q-btn  class="q-mt-md" @click="handleCancel">取消</q-btn>
+
+        </div>
       </div>
 
       <q-table
@@ -49,6 +54,7 @@
                 :icon="btn.icon"
                 class="q-ml-md"
                 padding="5px 5px"
+                :disable="btn.status === 'delete' ? isDeleteLoading : false"
               >
                 <q-tooltip
                   transition-show="scale"
@@ -79,19 +85,36 @@
 
 <script setup lang="ts">
 import axios from 'axios';
-import { QTableProps } from 'quasar';
-import { ref } from 'vue';
+import { QTableProps, useQuasar } from 'quasar';
+import { onBeforeMount, ref } from 'vue';
 interface btnType {
   label: string;
   icon: string;
   status: string;
 }
-const blockData = ref([
-  {
-    name: 'test',
-    age: 25,
-  },
-]);
+type UserItem = {
+  id: string;
+  name: string;
+  age: number;
+};
+type UserList = UserItem[];
+
+const $q = useQuasar();
+// get user list
+const blockData = ref<UserList>([]);
+const getUsers = async () => {
+  try {
+    const { data } = await axios.get('https://dahua.metcfire.com.tw/api/CRUDTest/a');
+    blockData.value = data;
+  } catch (error) {
+    console.error(error);
+  }
+};
+onBeforeMount(() => {
+  getUsers()
+})
+
+
 const tableConfig = ref([
   {
     label: '姓名',
@@ -119,13 +142,106 @@ const tableButtons = ref([
   },
 ]);
 
-const tempData = ref({
+const defaultData = {
   name: '',
-  age: '',
-});
-function handleClickOption(btn, data) {
-  // ...
+  age: 0,
+};
+const tempData = ref<Omit<UserItem, 'id'>>({ ...defaultData });
+const nameInputEl = ref()
+const ageInputEl = ref()
+const nameInputRules = [(val: string) => !!val || '輸入姓名']
+const ageInputRules = [(val: string) => !Number.isNaN(+val) || '輸入數字', (val: string) => !!val || '輸入年齡']
+const mode = ref('create');
+const editingId = ref('');
+function resetData() {
+  tempData.value = { ...defaultData };
+  nameInputEl.value?.resetValidation()
+  ageInputEl.value?.resetValidation()
 }
+function validateInput() {
+  nameInputEl.value?.validate()
+  ageInputEl.value?.validate()
+  return nameInputEl.value.hasError || ageInputEl.value.hasError
+}
+
+const isCreateLoading = ref(false);
+async function createUser() {
+  try {
+    if (validateInput()) return
+    isCreateLoading.value = true;
+    await axios.post('https://dahua.metcfire.com.tw/api/CRUDTest', tempData.value);
+    getUsers()
+    resetData();
+    $q.notify('新增成功');
+  } catch (error) {
+    console.error(error);
+  } finally {
+    isCreateLoading.value = false;
+  }
+};
+
+const isUpdateLoading = ref(false);
+async function updateUser() {
+  try {
+    if (validateInput()) return
+    isUpdateLoading.value = true;
+    await axios.patch('https://dahua.metcfire.com.tw/api/CRUDTest', { ...tempData.value, id: editingId.value });
+    blockData.value = blockData.value.map((item: UserItem) => {
+      if (item.id === editingId.value) {
+        return { ...tempData.value, id: editingId.value };
+      }
+      return item;
+    });
+    $q.notify('編輯成功');
+    resetData();
+    mode.value = 'create';
+    editingId.value = '';
+  } catch (error) {
+    console.error(error);
+  } finally {
+    isUpdateLoading.value = false;
+  }
+};
+
+const isDeleteLoading = ref(false);
+async function deleteUser(userId: string) {
+  try {
+    isDeleteLoading.value = true;
+    await axios.delete(`https://dahua.metcfire.com.tw/api/CRUDTest/${userId}`);
+    blockData.value = blockData.value.filter((item: UserItem) => item.id !== userId);
+    $q.notify('刪除成功');
+  } catch (error) {
+    console.error(error);
+  } finally {
+    isDeleteLoading.value = false;
+  }
+};
+function handleCancel() {
+  mode.value = 'create';
+  editingId.value = '';
+  resetData();
+}
+
+function handleClickOption(btn: btnType, data: UserItem) {
+  const { status } = btn
+  if (status === 'edit') {
+    mode.value = 'edit'
+    const { id, ...rest } = data
+    tempData.value = { ...rest }
+    editingId.value = id
+  } else if (status === 'delete') {
+    $q.dialog({
+      title: '提示',
+      message: '是否確定刪除該筆資料？',
+      ok: '確定',
+      cancel: '取消',
+    }).onOk(() => {
+      deleteUser(data.id)
+    })
+  }
+}
+
+
 </script>
 
 <style lang="scss" scoped>
